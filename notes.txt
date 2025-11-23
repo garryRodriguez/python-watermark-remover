@@ -1,0 +1,78 @@
+import os
+from flask import Flask, render_template, request, send_from_directory
+import cv2
+import numpy as np
+
+app = Flask(__name__)
+
+UPLOAD_FOLDER = "uploads"
+CLEAN_FOLDER = "cleaned"
+
+app.config["UPLOAD_FOLDER"] = UPLOAD_FOLDER
+app.config["CLEAN_FOLDER"] = CLEAN_FOLDER
+
+# Make folders if not exist
+os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+os.makedirs(CLEAN_FOLDER, exist_ok=True)
+
+
+def remove_watermark_advanced(image_path):
+    img = cv2.imread(image_path)
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+
+    # 1. Detect watermark text (black text)
+    thresh = cv2.adaptiveThreshold(
+        gray, 255,
+        cv2.ADAPTIVE_THRESH_MEAN_C,
+        cv2.THRESH_BINARY_INV,
+        35, 5
+    )
+
+    # 2. Thicken mask
+    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (15, 15))
+    mask = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, kernel)
+
+    # 3. Inpaint
+    cleaned = cv2.inpaint(img, mask, 7, cv2.INPAINT_TELEA)
+
+    return cleaned
+
+
+@app.route("/")
+def index():
+    return render_template("index.html")
+
+
+@app.route("/process", methods=["POST"])
+def process_images():
+    uploaded_files = request.files.getlist("images")
+    results = []
+
+    for file in uploaded_files:
+        file_path = os.path.join(app.config["UPLOAD_FOLDER"], file.filename)
+        file.save(file_path)
+
+        cleaned_img = remove_watermark_advanced(file_path)
+
+        output_path = os.path.join(app.config["CLEAN_FOLDER"], "cleaned_" + file.filename)
+        cv2.imwrite(output_path, cleaned_img)
+
+        results.append(output_path)
+
+    # Show download links
+    links = "<h3>Cleaned images:</h3>"
+    for img in results:
+        filename = img.split("/")[-1]
+        links += f'<a href="/download/{filename}">{filename}</a><br>'
+
+    return links
+
+
+@app.route("/download/<filename>")
+def download(filename):
+    return send_from_directory(app.config["CLEAN_FOLDER"], filename)
+
+
+# 👉 YOU WERE MISSING THIS PART
+if __name__ == "__main__":
+    app.run(debug=True)
